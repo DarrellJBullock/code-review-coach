@@ -1,0 +1,196 @@
+// Prisma schema for PR Review Coach (apps/api).
+//
+// Engine: PostgreSQL. ORM: Prisma (classic `prisma-client-js` generator,
+// pinned to 6.x deliberately — see apps/api/package.json comment / DBA notes
+// for why we did not take the 7.x default `prisma-client` generator).
+//
+// SYNC NOTE: the enums below must mirror the string union types in
+// `packages/shared/src/enums/index.ts` BY HAND. There is no shared codegen
+// between this Prisma schema and that TS package (known tradeoff, not a
+// bug) — if you add/rename a value in one place, update the other.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Mirrors RiskLevel in packages/shared/src/enums/index.ts
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// Mirrors FindingCategory in packages/shared/src/enums/index.ts
+enum FindingCategory {
+  BUG_RISK
+  TEST_COVERAGE
+  TYPE_SAFETY
+  ERROR_HANDLING
+  SECURITY
+  PERFORMANCE
+  ACCESSIBILITY
+  MAINTAINABILITY
+  API_CONTRACT_CHANGES
+  BREAKING_CHANGES
+}
+
+// Mirrors ReviewStatus in packages/shared/src/enums/index.ts
+enum ReviewStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+// NOTE: ReviewMode ('PERFORMANCE' | 'SECURITY' | 'ACCESSIBILITY') from shared
+// enums is intentionally NOT a Prisma enum here — a Review can run multiple
+// modes at once, so it's modeled as three independent booleans on Review
+// (modePerformance/modeSecurity/modeAccessibility) rather than a single enum
+// column. Mapping those booleans back to `ReviewDto.mode` (a single nullable
+// ReviewMode) is a service-layer concern for Backend, not a DB concern.
+
+model User {
+  id      String @id @default(cuid())
+  githubId String @unique
+
+  username  String
+  avatarUrl String?
+
+  // Encrypted GitHub access token, shape matches CryptoService's
+  // EncryptedPayload (apps/api/src/crypto/crypto.service.ts): iv, ciphertext,
+  // authTag, each base64-encoded strings. Never store the plaintext token.
+  accessTokenIv         String
+  accessTokenCiphertext String
+  accessTokenAuthTag    String
+
+  createdAt DateTime @default(now())
+
+  requestedReviews Review[] @relation("ReviewRequestedBy")
+
+  @@map("users")
+}
+
+model Repository {
+  id           String @id @default(cuid())
+  githubRepoId String @unique
+
+  fullName  String
+  ownerLogin String
+
+  pullRequests PullRequest[]
+
+  // Assumed access pattern (flagged for Backend to confirm): lookups by
+  // "owner/repo" string (e.g. an "add repository" search flow). githubRepoId
+  // stays the true unique identity since a repo can be renamed/transferred;
+  // fullName is deliberately NOT unique to avoid breaking on rename races.
+  @@index([fullName])
+  @@map("repositories")
+}
+
+model PullRequest {
+  id         String @id @default(cuid())
+  githubPrId String @unique // GitHub's global PR id — stable across renames/force-pushes, guards against duplicate ingestion on webhook redelivery
+
+  repositoryId String
+  repository   Repository @relation(fields: [repositoryId], references: [id], onDelete: Cascade)
+
+  number     Int
+  title      String
+  author     String
+  headBranch String
+  baseBranch String
+
+  // Plain string, not a Prisma enum, per spec ("open"/"closed" — mirrors
+  // GitHub's PR state field verbatim). Not currently constrained at the DB
+  // level (see DBA note back to Backend on validating/constraining this).
+  state String
+
+  lastSyncedAt DateTime
+
+  reviews Review[]
+
+  // Supports "list PRs for a repo" + guarantees no duplicate PR record per
+  // repo/number. repositoryId-only lookups are covered by this composite
+  // index's leftmost column, so no separate single-column index is needed.
+  @@unique([repositoryId, number])
+  @@map("pull_requests")
+}
+
+model Review {
+  id String @id @default(cuid())
+
+  pullRequestId String
+  pullRequest   PullRequest @relation(fields: [pullRequestId], references: [id], onDelete: Cascade)
+
+  requestedByUserId String
+  requestedBy       User   @relation("ReviewRequestedBy", fields: [requestedByUserId], references: [id], onDelete: Restrict)
+
+  status ReviewStatus @default(QUEUED)
+
+  overallRiskScore Int?
+  summary          String?
+
+  modePerformance   Boolean @default(false)
+  modeSecurity      Boolean @default(false)
+  modeAccessibility Boolean @default(false)
+
+  createdAt   DateTime  @default(now())
+  completedAt DateTime?
+
+  findings Finding[]
+
+  // pullRequestId lookup: "review history for this PR".
+  // requestedByUserId lookup: "my reviews" dashboard.
+  // status lookup: filtering queued/running/failed reviews (dashboards,
+  // ops/monitoring). All three are independent equality-lookup shapes, not
+  // a single compound query, hence three single-column indexes rather than
+  // one compound index.
+  @@index([pullRequestId])
+  @@index([requestedByUserId])
+  @@index([status])
+  @@map("reviews")
+}
+
+model Finding {
+  id String @id @default(cuid())
+
+  reviewId String
+  review   Review @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+
+  category  FindingCategory
+  riskLevel RiskLevel
+
+  // Free-form long text fields. Prisma's default native type mapping for
+  // `String` on PostgreSQL is already `TEXT` (no length cap), so no
+  // `@db.Text` annotation is needed for these to store arbitrarily long
+  // AI-generated prose.
+  riskJustification String
+  title             String
+  whyItMatters      String
+  whatCouldBreak    String
+  suggestedFix      String
+  suggestedTest     String
+
+  filePath       String?
+  lineRangeStart Int?
+  lineRangeEnd   Int?
+
+  approved        Boolean @default(false)
+  postedToGithub  Boolean @default(false)
+  githubCommentId String?
+
+  // Read pattern: "all findings for a review, filtered/grouped by risk
+  // level or category" (the primary review-results UI). Both composite
+  // indexes have reviewId as the leftmost column, so a plain @@index on
+  // reviewId alone would be redundant (Postgres can use either composite
+  // index's leftmost prefix for reviewId-only lookups) — omitted
+  // deliberately to avoid write-side index bloat.
+  @@index([reviewId, riskLevel])
+  @@index([reviewId, category])
+  @@map("findings")
+}

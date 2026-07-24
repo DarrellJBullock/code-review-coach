@@ -1,0 +1,53 @@
+# Local development infrastructure only.
+#
+# The Next.js app (apps/web) and NestJS API/worker (apps/api) run on the host
+# via `npm run dev:*` for fast iteration — they are NOT containerized here.
+# Only stateful services (Postgres, Redis) run in Docker.
+#
+# Usage:
+#   docker compose up -d      # start Postgres + Redis in the background
+#   docker compose ps         # check status/health
+#   docker compose down       # stop (add -v to also wipe volumes/data)
+
+services:
+  postgres:
+    image: postgres:16
+    container_name: code-review-coach-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: code_review_coach
+    ports:
+      # Published on 5433 (not the default 5432) to avoid clashing with
+      # another project's native Postgres on this machine.
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d code_review_coach"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  redis:
+    image: redis:7
+    container_name: code-review-coach-redis
+    restart: unless-stopped
+    ports:
+      # Published on 6380 (not the default 6379) to avoid clashing with
+      # another project's native Redis on this machine.
+      - "6380:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  postgres_data:
+  redis_data:
