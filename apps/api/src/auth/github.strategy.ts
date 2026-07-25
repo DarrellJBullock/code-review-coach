@@ -7,7 +7,7 @@ import { UsersService } from '../users/users.service';
 
 type GithubDoneCallback = (err: unknown, user?: User | false) => void;
 
-const GITHUB_OAUTH_CALLBACK_URL = 'http://localhost:4000/auth/github/callback';
+const DEFAULT_API_PUBLIC_URL = 'http://localhost:4000';
 const MISSING_CREDENTIAL_PLACEHOLDER = 'not-configured';
 
 /**
@@ -31,11 +31,17 @@ export class GithubStrategy extends PassportStrategy(Strategy, 'github') {
   ) {
     const clientID = configService.get<string>('GITHUB_CLIENT_ID');
     const clientSecret = configService.get<string>('GITHUB_CLIENT_SECRET');
+    // The API's own public base URL — e.g. https://api.example.com in
+    // production. Was previously hardcoded to localhost, which meant every
+    // real (non-local) login attempt got a callback URL GitHub never had
+    // registered ("redirect_uri is not associated with this application").
+    const apiPublicUrl = configService.get<string>('API_PUBLIC_URL') || DEFAULT_API_PUBLIC_URL;
+    const callbackUrl = `${apiPublicUrl.replace(/\/+$/, '')}/auth/github/callback`;
 
     super({
       clientID: clientID || MISSING_CREDENTIAL_PLACEHOLDER,
       clientSecret: clientSecret || MISSING_CREDENTIAL_PLACEHOLDER,
-      callbackURL: GITHUB_OAUTH_CALLBACK_URL,
+      callbackURL: callbackUrl,
       scope: ['repo', 'read:user'],
     });
 
@@ -45,7 +51,7 @@ export class GithubStrategy extends PassportStrategy(Strategy, 'github') {
           'will still boot, but any real /auth/github login attempt will fail ' +
           'until a GitHub OAuth App is created and its credentials are set ' +
           '(see .env.example; callback URL to register: ' +
-          `${GITHUB_OAUTH_CALLBACK_URL}).`,
+          `${callbackUrl}).`,
       );
     }
   }

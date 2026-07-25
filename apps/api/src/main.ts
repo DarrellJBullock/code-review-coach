@@ -1,6 +1,7 @@
 import 'reflect-metadata';
 import { NestFactory } from '@nestjs/core';
 import { Logger } from '@nestjs/common';
+import type { NestExpressApplication } from '@nestjs/platform-express';
 import session from 'express-session';
 import passport from 'passport';
 import { AppModule } from './app.module';
@@ -9,7 +10,10 @@ const DEFAULT_WEB_URL = 'http://localhost:3000';
 const DEV_ONLY_INSECURE_SESSION_SECRET = 'dev-insecure-session-secret-CHANGE-ME';
 
 async function bootstrap(): Promise<void> {
-  const app = await NestFactory.create(AppModule);
+  // NestExpressApplication (not the platform-agnostic INestApplication) so
+  // `app.set('trust proxy', ...)` below — an Express-specific method — is
+  // typed. NestFactory.create still returns the Express adapter by default.
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
   const logger = new Logger('Bootstrap');
 
   // apps/web (port 3000) and apps/api (port 4000) are different origins, and
@@ -19,6 +23,18 @@ async function bootstrap(): Promise<void> {
     origin: webUrl,
     credentials: true,
   });
+
+  // In production (Railway API + Vercel web are on different real domains,
+  // both over HTTPS) the session cookie must be `secure: true` +
+  // `sameSite: 'none'` or the browser silently drops it on every
+  // credentialed cross-origin fetch — the symptom is a "successful" GitHub
+  // login that just bounces back to /login with no session. Local dev keeps
+  // `secure: false` / `sameSite: 'lax'` since it's plain http://localhost.
+  // Trust the first proxy hop (Railway's edge) so Express sees the original
+  // https:// scheme via X-Forwarded-Proto rather than the internal http
+  // connection — required for `secure` cookies to be set at all here.
+  const isProduction = process.env.NODE_ENV === 'production';
+  app.set('trust proxy', 1);
 
   const sessionSecret = process.env.SESSION_SECRET;
   if (!sessionSecret) {
@@ -36,11 +52,8 @@ async function bootstrap(): Promise<void> {
       saveUninitialized: false,
       cookie: {
         httpOnly: true,
-        // NOTE: this MUST become `true` once the app is served over HTTPS in
-        // production — secure cookies are silently dropped by browsers over
-        // plain HTTP, so it has to stay `false` for local http://localhost
-        // dev.
-        secure: false,
+        secure: isProduction,
+        sameSite: isProduction ? 'none' : 'lax',
         maxAge: 1000 * 60 * 60 * 24 * 7, // 7 days
       },
     }),
