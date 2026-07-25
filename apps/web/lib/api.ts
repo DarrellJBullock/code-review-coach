@@ -14,6 +14,13 @@
  *   "am I logged in?" on the login page itself).
  */
 
+// Empty string is a valid, intentional value in production — it means "call
+// my own origin" (relative URLs), which Vercel then transparently proxies
+// to the Railway API (see vercel.json `rewrites`). This keeps the session
+// cookie strictly first-party from the browser's point of view, which iOS
+// Safari's cross-site cookie blocking otherwise defeats entirely
+// (SameSite=None was not enough — Safari's ITP still dropped the cookie on
+// the literal cross-domain vercel.app <-> railway.app fetches).
 const API_URL = process.env.NEXT_PUBLIC_API_URL;
 
 export class ApiError extends Error {
@@ -34,7 +41,7 @@ export interface ApiRequestOptions extends Omit<RequestInit, 'body'> {
 }
 
 function resolveApiUrl(): string {
-  if (!API_URL) {
+  if (API_URL === undefined) {
     throw new Error(
       'NEXT_PUBLIC_API_URL is not set. Copy .env.example to .env.local in apps/web and set it.',
     );

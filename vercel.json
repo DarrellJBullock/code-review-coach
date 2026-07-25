@@ -2,5 +2,39 @@
   "framework": "nextjs",
   "installCommand": "npm install",
   "buildCommand": "npm run build --workspace packages/shared && npm run build --workspace apps/web",
-  "outputDirectory": "apps/web/.next"
+  "outputDirectory": "apps/web/.next",
+  "rewrites": [
+    {
+      "source": "/health",
+      "destination": "https://api-production-20a9.up.railway.app/health"
+    },
+    {
+      "source": "/auth/:path*",
+      "destination": "https://api-production-20a9.up.railway.app/auth/:path*"
+    },
+    {
+      "source": "/repositories",
+      "destination": "https://api-production-20a9.up.railway.app/repositories"
+    },
+    {
+      "source": "/repositories/:path*",
+      "destination": "https://api-production-20a9.up.railway.app/repositories/:path*"
+    },
+    {
+      "source": "/pull-requests/:path*",
+      "destination": "https://api-production-20a9.up.railway.app/pull-requests/:path*"
+    },
+    {
+      "source": "/reviews",
+      "destination": "https://api-production-20a9.up.railway.app/reviews"
+    },
+    {
+      "source": "/reviews/:path*",
+      "destination": "https://api-production-20a9.up.railway.app/reviews/:path*"
+    },
+    {
+      "source": "/findings/:path*",
+      "destination": "https://api-production-20a9.up.railway.app/findings/:path*"
+    }
+  ]
 }
