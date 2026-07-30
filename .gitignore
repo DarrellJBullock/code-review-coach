@@ -10,3 +10,4 @@ coverage/
 apps/api/prisma/migrations/dev.db
 .vercel
 .env*
+.claude/
